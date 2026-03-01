@@ -22,9 +22,13 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo ">>> 步骤 1: 安装依赖"
-npm install --production
-echo "✅ 依赖安装完成"
+echo ">>> 步骤 1: 检查并安装依赖"
+if [ ! -d "node_modules" ]; then
+    npm install --production
+    echo "✅ 依赖安装完成"
+else
+    echo "✅ 依赖已安装"
+fi
 echo ""
 
 # 配置环境变量
@@ -32,17 +36,29 @@ echo ">>> 步骤 2: 配置环境变量"
 
 # 读取现有配置（如果存在）
 if [ -f "$SCRIPT_DIR/.env" ]; then
-    source "$SCRIPT_DIR/.env"
+    source "$SCRIPT_DIR/.env" 2>/dev/null || true
     echo "检测到现有配置"
 fi
 
 # 交互式输入
-read -p "请输入 Telegram Bot Token (从 @BotFather 获取): " TELEGRAM_TOKEN < /dev/tty
-TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-$TELEGRAM_BOT_TOKEN}
+if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+    read -p "请输入 Telegram Bot Token (从 @BotFather 获取): " TELEGRAM_TOKEN < /dev/tty
+else
+    read -p "请输入 Telegram Bot Token (直接回车使用现有): " TELEGRAM_TOKEN < /dev/tty
+    TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-$TELEGRAM_BOT_TOKEN}
+fi
 
-read -p "请输入 OpenClaw API 地址 (默认: http://localhost:3000): " OC_API < /dev/tty
-OC_API=${OC_API:-$OPENCLAW_API_URL}
-OC_API=${OC_API:-http://localhost:3000}
+if [ -z "$TELEGRAM_TOKEN" ]; then
+    echo "❌ 错误: 必须提供 Telegram Bot Token"
+    exit 1
+fi
+
+if [ -z "$OPENCLAW_API_URL" ]; then
+    read -p "请输入 OpenClaw API 地址 (默认: http://localhost:3000): " OC_API < /dev/tty
+    OC_API=${OC_API:-http://localhost:3000}
+else
+    OC_API=$OPENCLAW_API_URL
+fi
 
 # 写入配置
 cat > "$SCRIPT_DIR/.env" << EOF
@@ -68,7 +84,7 @@ fi
 
 if [ ! -f "$OPENCLAW_CONFIG" ]; then
     echo "⚠️ 未找到 OpenClaw 配置文件，跳过信道配置"
-    echo "   请手动将 Telegram bot token 配置到 external-telegram 的环境变量中"
+    echo "   请手动配置 Telegram"
 else
     # 备份配置
     BACKUP_FILE="${OPENCLAW_CONFIG}.external_telegram_backup_$(date +%Y%m%d%H%M%S)"
@@ -80,19 +96,16 @@ else
 const fs = require('fs');
 const config = JSON.parse(fs.readFileSync('$OPENCLAW_CONFIG', 'utf8'));
 
-// 移除现有的 telegram 配置
-if (config.channels && config.channels.telegram) {
-    // 保留 token 但修改配置
-    const oldToken = config.channels.telegram.botToken;
-    config.channels.telegram = {
-        enabled: true,
-        botToken: '$TELEGRAM_TOKEN',
-        dmPolicy: 'open',
-        groupPolicy: 'allowlist',
-        allowFrom: ['*'],
-        streaming: 'off'
-    };
-}
+// 移除现有的 telegram 配置并用 external-telegram token
+config.channels = config.channels || {};
+config.channels.telegram = {
+    enabled: true,
+    botToken: '$TELEGRAM_TOKEN',
+    dmPolicy: 'open',
+    groupPolicy: 'allowlist',
+    allowFrom: ['*'],
+    streaming: 'off'
+};
 
 // 写入配置
 fs.writeFileSync('$OPENCLAW_CONFIG', JSON.stringify(config, null, 2));
@@ -114,9 +127,6 @@ if command -v pm2 &> /dev/null; then
     echo "   使用 'pm2 logs openclaw-external-telegram' 查看日志"
 else
     # 使用 systemd
-    echo "检测到 pm2 未安装，使用 systemd 方式..."
-    
-    # 创建 systemd 服务
     SERVICE_DIR="$HOME/.config/systemd/user"
     mkdir -p "$SERVICE_DIR"
     NPM_PATH=$(command -v npm)
@@ -137,16 +147,15 @@ RestartSec=5
 WantedBy=default.target
 EOF
 
-    systemctl --user daemon-reload
-    systemctl --user enable --now openclaw-external-telegram.service
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable --now openclaw-external-telegram.service 2>/dev/null || true
     
     # 启用 linger
     if command -v loginctl &> /dev/null; then
-        loginctl enable-linger $USER || true
+        loginctl enable-linger $USER 2>/dev/null || true
     fi
     
     echo "✅ 已通过 systemd 启动服务"
-    echo "   使用 'systemctl --user status openclaw-external-telegram' 查看日志"
 fi
 
 echo ""

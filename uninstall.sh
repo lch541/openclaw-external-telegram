@@ -14,18 +14,21 @@ cd "$SCRIPT_DIR"
 echo ">>> 步骤 1: 停止服务"
 
 # 尝试 pm2
-if command -v pm2 &> /dev/null && pm2 describe openclaw-external-telegram &> /dev/null; then
-    pm2 delete openclaw-external-telegram
-    pm2 save
-    echo "✅ 已停止 pm2 服务"
+if command -v pm2 &> /dev/null; then
+    if pm2 describe openclaw-external-telegram &> /dev/null; then
+        pm2 stop openclaw-external-telegram
+        pm2 delete openclaw-external-telegram
+        pm2 save
+        echo "✅ 已停止 pm2 服务"
+    fi
 fi
 
 # 尝试 systemd
-if systemctl --user is-active --quiet openclaw-external-telegram.service 2>/dev/null; then
-    systemctl --user stop openclaw-external-telegram.service
-    systemctl --user disable openclaw-external-telegram.service
+if systemctl --user list-unit-files | grep -q "openclaw-external-telegram.service"; then
+    systemctl --user stop openclaw-external-telegram.service 2>/dev/null || true
+    systemctl --user disable openclaw-external-telegram.service 2>/dev/null || true
     rm -f "$HOME/.config/systemd/user/openclaw-external-telegram.service"
-    systemctl --user daemon-reload
+    systemctl --user daemon-reload 2>/dev/null || true
     echo "✅ 已停止 systemd 服务"
 fi
 
@@ -43,17 +46,13 @@ if [ -n "$BACKUP_FILE" ] && [ -f "$BACKUP_FILE" ]; then
     cp "$BACKUP_FILE" "$OPENCLAW_CONFIG"
     echo "✅ 已恢复配置: $BACKUP_FILE"
     
-    # 可选：删除备份文件
-    read -p "是否删除备份文件? [y/N]: " DELETE_BACKUP < /dev/tty
-    if [ "$DELETE_BACKUP" = "y" ] || [ "$DELETE_BACKUP" = "Y" ]; then
-        rm -f "$BACKUP_FILE"
-        echo "✅ 备份文件已删除"
-    fi
+    # 删除备份文件
+    rm -f "$BACKUP_FILE"
+    echo "✅ 备份文件已删除"
 else
     # 没有备份，需要手动还原 telegram 配置
     if [ -f "$OPENCLAW_CONFIG" ]; then
-        echo "⚠️ 未找到备份文件，需要手动恢复"
-        echo "   请运行 'openclaw configure' 重新配置 Telegram"
+        echo "⚠️ 未找到备份文件，OpenClaw 配置未变更"
     fi
 fi
 
@@ -77,6 +76,6 @@ echo "========================================="
 echo "  卸载完成"
 echo "========================================="
 echo ""
-echo "如果之前有 Telegram 信道配置，请运行以下命令重新配置:"
+echo "如果需要重新使用 Telegram 信道，请运行:"
 echo "  openclaw configure --section channels"
 echo ""
